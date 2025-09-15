@@ -1,6 +1,6 @@
 import { collection, getDocs, doc, getDoc, query, orderBy, limit, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Scheme, Article, Contact, ChatMessage } from '../types';
+import { Scheme, Article, Contact, ChatMessage, WeatherData, CropPriceData } from '../types';
 
 // Generic function to fetch data from a collection
 async function fetchCollection<T>(collectionName: string): Promise<T[]> {
@@ -55,4 +55,30 @@ export async function saveChatMessage(userId: string, message: Omit<ChatMessage,
     ...message,
     timestamp: serverTimestamp(),
   });
+}
+
+export async function getWeatherData(): Promise<WeatherData | null> {
+  const docRef = doc(db, 'weather', 'current');
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    const data = docSnap.data();
+    return {
+      ...data,
+      lastUpdated: (data.lastUpdated as Timestamp).toDate()
+    } as WeatherData;
+  }
+  return null;
+}
+
+export async function getCropPrices(): Promise<CropPriceData | null> {
+  const docRef = doc(db, 'cropPrices', 'current');
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    const data = docSnap.data();
+    return {
+      ...data,
+      lastUpdated: (data.lastUpdated as Timestamp).toDate()
+    } as CropPriceData;
+  }
+  return null;
 }

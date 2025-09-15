@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import Card from './Card';
-import { getDashboardData, getFeaturedScheme } from '../services/firestoreService';
-import { Scheme } from '../types';
+import { getDashboardData, getFeaturedScheme, getWeatherData, getCropPrices } from '../services/firestoreService';
+import { Scheme, WeatherData, CropPriceData } from '../types';
 import Spinner from './Spinner';
 import { useTranslation } from '../hooks/useTranslation';
 
 const Dashboard: React.FC = () => {
   const { t } = useTranslation();
-  const [dashboardInfo, setDashboardInfo] = useState<{ weather: string; marketPrice: string } | null>(null);
+  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+  const [cropPrices, setCropPrices] = useState<CropPriceData | null>(null);
   const [featuredScheme, setFeaturedScheme] = useState<Scheme | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -16,12 +17,14 @@ const Dashboard: React.FC = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [dashData, schemeData] = await Promise.all([
-          getDashboardData(),
+        const [weather, prices, scheme] = await Promise.all([
+          getWeatherData(),
+          getCropPrices(),
           getFeaturedScheme(),
         ]);
-        setDashboardInfo(dashData);
-        setFeaturedScheme(schemeData);
+        setWeatherData(weather);
+        setCropPrices(prices);
+        setFeaturedScheme(scheme);
         setError(null);
       } catch (err) {
         console.error("Error fetching dashboard data:", err);
@@ -53,16 +56,51 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-2 gap-4">
         <Card>
             <div className="p-4 text-center">
-                <p className="text-3xl">☀️</p>
+                <p className="text-3xl">
+                  {weatherData?.forecast[0]?.icon ? (
+                    <img 
+                      src={`https://openweathermap.org/img/wn/${weatherData.forecast[0].icon}@2x.png`}
+                      alt="weather icon"
+                      className="w-16 h-16 mx-auto"
+                    />
+                  ) : '☀️'}
+                </p>
                 <h3 className="font-bold text-lg text-amber-800">{t('मौसम')}</h3>
-                <p className="text-gray-600">{t(dashboardInfo?.weather || 'N/A')}</p>
+                {weatherData?.forecast[0] ? (
+                  <div className="text-gray-600">
+                    <p className="font-medium">{weatherData.location}</p>
+                    <p className="text-2xl font-bold mt-1">
+                      {Math.round(weatherData.forecast[0].maxTemp)}°C
+                    </p>
+                    <p className="text-sm">{t(weatherData.forecast[0].description)}</p>
+                    <p className="text-xs mt-1">
+                      {t('नमी')}: {weatherData.forecast[0].humidity}% | {t('हवा')}: {weatherData.forecast[0].windSpeed} m/s
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-gray-600">{t('मौसम की जानकारी उपलब्ध नहीं')}</p>
+                )}
             </div>
         </Card>
         <Card>
             <div className="p-4 text-center">
                 <p className="text-3xl">🌾</p>
                 <h3 className="font-bold text-lg text-green-800">{t('मंडी भाव')}</h3>
-                <p className="text-gray-600">{t(dashboardInfo?.marketPrice || 'N/A')}</p>
+                {cropPrices?.prices.length ? (
+                  <div className="text-left mt-2 space-y-2">
+                    {cropPrices.prices.slice(0, 3).map(crop => (
+                      <div key={crop.crop} className="text-sm">
+                        <span className="font-medium">{t(crop.crop)}</span>: 
+                        <span className="text-gray-600"> ₹{crop.averagePrice}/क्विं</span>
+                      </div>
+                    ))}
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('अधिक फसलों के लिए क्लिक करें')}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-gray-600">{t('बाज़ार भाव उपलब्ध नहीं')}</p>
+                )}
             </div>
         </Card>
       </div>

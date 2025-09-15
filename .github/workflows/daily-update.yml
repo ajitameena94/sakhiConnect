@@ -1,0 +1,41 @@
+name: Daily Data Update
+
+on:
+  schedule:
+    # Runs every day at 6 AM and 6 PM IST (00:30 and 12:30 UTC)
+    - cron: '30 0,12 * * *'
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install Dependencies
+        run: npm install
+        
+      - name: Create Service Account Key
+        run: |
+          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" > firebase/serviceAccountKey.json
+          
+      - name: Fetch Weather Data
+        run: node scripts/fetchWeather.js
+        
+      - name: Fetch Crop Prices
+        run: node scripts/fetchCropPrices.js
+        
+      - name: Fetch Schemes
+        run: node scripts/fetchSchemes.js
+        
+      - name: Fetch Articles
+        run: node scripts/fetchArticles.js
+        
+      - name: Fetch Contacts
+        run: node scripts/fetchContacts.js

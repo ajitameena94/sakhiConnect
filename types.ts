@@ -40,3 +40,41 @@ export interface NavItem {
     label: string;
     icon: React.ComponentType<{ className?: string }>;
 }
+
+export interface WeatherForecast {
+    date: string;
+    maxTemp: number;
+    minTemp: number;
+    description: string;
+    icon: string;
+    humidity: number;
+    windSpeed: number;
+}
+
+export interface WeatherData {
+    location: string;
+    forecast: WeatherForecast[];
+    lastUpdated: Date;
+}
+
+export interface MarketData {
+    market: string;
+    modalPrice: number;
+    minPrice: number;
+    maxPrice: number;
+    unit: string;
+}
+
+export interface CropPrice {
+    crop: string;
+    averagePrice: number;
+    minPrice: number;
+    maxPrice: number;
+    markets: MarketData[];
+    date: string;
+}
+
+export interface CropPriceData {
+    prices: CropPrice[];
+    lastUpdated: Date;
+}

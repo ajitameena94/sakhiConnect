@@ -68,6 +68,11 @@ export async function translateText(text: string, targetLanguageCode: string): P
     return text;
   }
 
+  // If we're under a cooldown because of rate limiting, skip calls
+  if (lastRateLimitReset > Date.now()) {
+    return text;
+  }
+
   const targetLanguageName = LANGUAGE_MAP[targetLanguageCode] || 'English';
 
   // Try up to 2 attempts with slightly different prompts if the model returns the original text
@@ -99,8 +104,29 @@ export async function translateText(text: string, targetLanguageCode: string): P
       }
 
       return translated;
-    } catch (error) {
-      console.warn(`Translation attempt ${attempt + 1} failed for ${targetLanguageCode}:`, error?.message || error);
+    } catch (error: any) {
+      const msg = error?.message || JSON.stringify(error);
+      console.warn(`Translation attempt ${attempt + 1} failed for ${targetLanguageCode}:`, msg);
+      // If this is a rate-limit / quota error, set a cooldown to avoid repeated failing calls
+      try {
+        const errObj = typeof error === 'string' ? JSON.parse(error) : error;
+        const details = errObj?.error || errObj;
+        if (details?.code === 429 || details?.status === 'RESOURCE_EXHAUSTED') {
+          // look for retryDelay in details
+          const retryInfo = details?.details?.find((d: any) => d['@type'] && d['@type'].includes('RetryInfo'));
+          let delaySec = 30;
+          if (retryInfo && retryInfo.retryDelay) {
+            // retryDelay often is like "37s"
+            const m = String(retryInfo.retryDelay).match(/(\d+)s/);
+            if (m) delaySec = parseInt(m[1], 10);
+          }
+          lastRateLimitReset = Date.now() + delaySec * 1000;
+          console.warn(`Gemini rate limit encountered. Pausing translations for ${delaySec}s.`);
+          return text;
+        }
+      } catch (parseErr) {
+        // ignore parsing errors
+      }
       // continue to next attempt
     }
   }
@@ -108,6 +134,9 @@ export async function translateText(text: string, targetLanguageCode: string): P
   // Final fallback: return original text so UI remains usable
   return text;
 }
+
+// Internal cooldown timestamp (ms) to avoid calling Gemini while rate-limited
+let lastRateLimitReset = 0;
 
 // Translate multiple texts in one call, returning an array of translated strings in the same order.
 export async function translateBatch(texts: string[], targetLanguageCode: string): Promise<string[]> {
@@ -118,24 +147,93 @@ export async function translateBatch(texts: string[], targetLanguageCode: string
   }
 
   const targetLanguageName = LANGUAGE_MAP[targetLanguageCode] || 'English';
-  const prompt = `You are a professional translator. Translate the following array of Hindi strings into ${targetLanguageName}. Return a JSON array of translated strings in the same order, and return only valid JSON with no extra text. Input: ${JSON.stringify(texts)}`;
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ text: prompt }],
-      config: { temperature: 0.0 }
-    });
-    const text = response.text.trim();
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed.map((s) => (typeof s === 'string' ? s : String(s)));
-    // If parsing failed, fallback to individual translations
-    const results = [];
-    for (const t of texts) results.push(await translateText(t, targetLanguageCode));
-    return results;
-  } catch (e) {
-    console.warn('Batch translation failed, falling back to individual translations:', e?.message || e);
-    const results = [];
-    for (const t of texts) results.push(await translateText(t, targetLanguageCode));
-    return results;
+  // Helper: try to extract JSON array from model text (handles ```json fences or stray text)
+  const extractJsonArray = (s: string): any[] | null => {
+    if (!s) return null;
+    // Remove common markdown fences
+    const cleaned = s.replace(/```json\n?|```/g, '\n');
+    // Try to find the first [...] substring that is valid JSON
+    const firstBracket = cleaned.indexOf('[');
+    if (firstBracket >= 0) {
+      // try progressively longer substrings to find valid JSON
+      for (let end = cleaned.indexOf(']', firstBracket); end !== -1; end = cleaned.indexOf(']', end + 1)) {
+        const candidate = cleaned.slice(firstBracket, end + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+          // continue
+        }
+      }
+    }
+    // As a last resort, try to parse the whole string
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {}
+    return null;
+  };
+
+  // Chunk texts to avoid large or many requests; smaller batches reduce quota pressure
+  const CHUNK_SIZE = 3;
+  const results: string[] = [];
+
+  const callWithRetries = async (promptText: string): Promise<string> => {
+    // Exponential backoff with jitter
+    let attempt = 0;
+    const maxAttempts = 3;
+    while (attempt < maxAttempts) {
+      try {
+        const resp = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: [{ text: promptText }], config: { temperature: 0.0 } });
+        return resp.text || '';
+      } catch (err: any) {
+        attempt++;
+        const wait = Math.min(1000 * 2 ** attempt + Math.floor(Math.random() * 300), 10000);
+        // If rate-limited, set cooldown and abort
+        try {
+          const details = err?.error || err;
+          if (details?.code === 429 || details?.status === 'RESOURCE_EXHAUSTED') {
+            const retryInfo = details?.details?.find((d: any) => d['@type'] && d['@type'].includes('RetryInfo'));
+            let delaySec = 30;
+            if (retryInfo && retryInfo.retryDelay) {
+              const m = String(retryInfo.retryDelay).match(/(\d+)s/);
+              if (m) delaySec = parseInt(m[1], 10);
+            }
+            lastRateLimitReset = Date.now() + delaySec * 1000;
+            console.warn(`Gemini rate limit in batch. Pausing translations for ${delaySec}s.`);
+            throw err;
+          }
+        } catch (parseErr) {
+          // ignore
+        }
+        if (attempt >= maxAttempts) throw err;
+        await new Promise(r => setTimeout(r, wait));
+      }
+    }
+    return '';
+  };
+
+  for (let i = 0; i < texts.length; i += CHUNK_SIZE) {
+    const chunk = texts.slice(i, i + CHUNK_SIZE);
+    const prompt = `You are a professional translator. Translate the following array of Hindi strings into ${targetLanguageName}. Return a JSON array of translated strings in the same order, and return only valid JSON with no extra text. Input: ${JSON.stringify(chunk)}`;
+    try {
+      const raw = await callWithRetries(prompt);
+      const extracted = extractJsonArray(raw);
+      if (extracted && Array.isArray(extracted) && extracted.length === chunk.length) {
+        results.push(...extracted.map((s) => (typeof s === 'string' ? s : String(s))));
+        continue;
+      }
+      // if extraction failed or count mismatch, fallback to individual translations for this chunk
+      for (const t of chunk) {
+        results.push(await translateText(t, targetLanguageCode));
+      }
+    } catch (e) {
+      console.warn('Batch chunk failed, falling back to individual translations for chunk:', e?.message || e);
+      for (const t of chunk) {
+        results.push(await translateText(t, targetLanguageCode));
+      }
+    }
   }
+
+  return results;
 }
