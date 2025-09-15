@@ -67,10 +67,6 @@ const Dashboard: React.FC = () => {
         </Card>
       </div>
 
-      {/* Debug: raw data (visible only in dev) */}
-      <div className="mt-4 text-xs text-gray-500">
-        <pre className="whitespace-pre-wrap">{JSON.stringify(dashboardInfo, null, 2)}</pre>
-      </div>
 
       {featuredScheme && (
         <Card>
