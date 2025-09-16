@@ -1,6 +1,7 @@
-import { collection, getDocs, doc, getDoc, query, orderBy, limit, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, query, orderBy, limit, addDoc, serverTimestamp, Timestamp, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Scheme, Article, Contact, ChatMessage, WeatherData, CropPriceData } from '../types';
+import axios from 'axios';
 
 // Generic function to fetch data from a collection
 async function fetchCollection<T>(collectionName: string): Promise<T[]> {
@@ -81,4 +82,88 @@ export async function getCropPrices(): Promise<CropPriceData | null> {
     } as CropPriceData;
   }
   return null;
+}
+
+export async function insertSampleData() {
+  try {
+    // Insert sample weather data
+    await setDoc(doc(db, 'weather', 'current'), {
+      location: 'Jaipur',
+      forecast: [
+        { time: '10:00 AM', maxTemp: 32, rainfall: 0, windSpeed: 5, humidity: 40 },
+        { time: '11:00 AM', maxTemp: 34, rainfall: 0, windSpeed: 6, humidity: 38 },
+      ],
+      lastUpdated: serverTimestamp(),
+    });
+
+    // Insert sample crop prices
+    await setDoc(doc(db, 'cropPrices', 'current'), {
+      prices: [
+        { crop: 'Wheat', averagePrice: 2250, trend: [2200, 2250, 2300] },
+        { crop: 'Rice', averagePrice: 3000, trend: [2900, 2950, 3000] },
+      ],
+      lastUpdated: serverTimestamp(),
+    });
+
+    console.log('Sample data inserted successfully.');
+  } catch (error) {
+    console.error('Error inserting sample data:', error);
+  }
+}
+
+export async function insertRealData() {
+  try {
+    // Fetch real weather data
+    const weatherResponse = await axios.get('https://api.open-meteo.com/v1/forecast', {
+      params: {
+        latitude: 26.9124,
+        longitude: 75.7873,
+        hourly: 'temperature_2m,precipitation,wind_speed_10m,humidity_2m',
+        current_weather: true,
+      },
+    });
+
+    const weatherData = weatherResponse.data;
+    const forecast = weatherData.hourly.time.map((time, index) => ({
+      time,
+      maxTemp: weatherData.hourly.temperature_2m[index],
+      rainfall: weatherData.hourly.precipitation[index],
+      windSpeed: weatherData.hourly.wind_speed_10m[index],
+      humidity: weatherData.hourly.humidity_2m[index],
+    }));
+
+    await setDoc(doc(db, 'weather', 'current'), {
+      location: 'Jaipur',
+      forecast,
+      lastUpdated: serverTimestamp(),
+    });
+
+    // Fetch real crop price data (example using Agmarknet API)
+    const cropResponse = await axios.get('https://api.data.gov.in/resource/agmarknet', {
+      params: {
+        'api-key': 'YOUR_API_KEY',
+        format: 'json',
+        filters: JSON.stringify({ state: 'Rajasthan', district: 'Jaipur' }),
+      },
+    });
+
+    const cropPrices = cropResponse.data.records.map(record => ({
+      crop: record.commodity,
+      averagePrice: parseFloat(record.modal_price),
+      trend: [
+        parseFloat(record.min_price),
+        parseFloat(record.modal_price),
+        parseFloat(record.max_price),
+      ],
+    }));
+
+    await setDoc(doc(db, 'cropPrices', 'current'), {
+      prices: cropPrices,
+      lastUpdated: serverTimestamp(),
+    });
+
+    console.log('Real data inserted successfully.');
+  } catch (error) {
+    console.error('Error inserting real data:', error);
+  }
 }

@@ -49,6 +49,7 @@ export interface WeatherForecast {
     icon: string;
     humidity: number;
     windSpeed: number;
+    rainfall: number; // Added rainfall property
 }
 
 export interface WeatherData {
@@ -72,6 +73,7 @@ export interface CropPrice {
     maxPrice: number;
     markets: MarketData[];
     date: string;
+    trend: number[]; // Added trend property
 }
 
 export interface CropPriceData {
